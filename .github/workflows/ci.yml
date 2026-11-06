@@ -1,0 +1,193 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to validate; defaults to the triggering ref
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: ${{ matrix.os }} / CPython ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      COVERAGE_FILE: .coverage.${{ matrix.os }}-${{ matrix.python-version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.6"
+          enable-cache: true
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: false
+      - name: Install package and test dependencies
+        run: |
+          uv sync --locked --python "${{ matrix.python-version }}"
+      - name: Verify interpreter and integration dependencies
+        run: |
+          uv run --no-sync python -c "import sys, fastapi, httpx, aioboto3; assert sys.implementation.name == 'cpython'; print(sys.version)"
+      - name: Run offline storage tests with coverage
+        run: uv run --no-sync python -m pytest --cov=async_storage_kit -m "not live_s3"
+      - name: Save platform coverage data
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-${{ matrix.os }}-${{ matrix.python-version }}
+          path: .coverage.${{ matrix.os }}-${{ matrix.python-version }}
+          include-hidden-files: true
+          if-no-files-found: error
+      - name: Build wheel and source distribution
+        run: uv build --no-sources
+      - name: Verify distributions and dependency isolation
+        run: uv run --no-sync python .github/scripts/validate_distribution.py dist --test-sdist --test-extras
+
+  coverage:
+    name: 100% statement and branch coverage
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.6"
+          enable-cache: true
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.13"
+      - name: Install coverage tools
+        run: uv sync --locked --python 3.13
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+      - name: Require complete coverage across platforms
+        run: |
+          uv run --no-sync coverage combine
+          uv run --no-sync coverage report --fail-under=100
+          uv run --no-sync coverage xml --fail-under=100
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: combined-coverage
+          path: coverage.xml
+          if-no-files-found: error
+
+  quality:
+    name: Lint, types, hooks, and metadata
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.6"
+          enable-cache: true
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.13"
+      - name: Install quality tools
+        run: |
+          uv sync --locked --python 3.13
+      - name: Lint
+        run: uv run --no-sync ruff check src tests examples .github/scripts
+      - name: Formatting
+        run: uv run --no-sync ruff format --check src tests examples .github/scripts
+      - name: Type check
+        run: uv run --no-sync mypy src/
+      - name: Pre-commit checks
+        run: uv run --no-sync python -m pre_commit run --all-files
+      - name: Build distributions for metadata validation
+        run: uv build --no-sources
+      - name: Check PyPI metadata and description
+        run: uv run --no-sync python -m twine check --strict dist/*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-distributions
+          path: dist/*
+          if-no-files-found: error
+
+  minio:
+    name: Live S3 contract (SILO MinIO fork)
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    env:
+      S3_TEST_ENDPOINT: http://127.0.0.1:9000
+      S3_TEST_BUCKET: async-storage-kit-ci
+      S3_TEST_ACCESS_KEY: minioadmin
+      S3_TEST_SECRET_KEY: minioadmin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.6"
+          enable-cache: true
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.13"
+      - name: Install integration dependencies
+        run: uv sync --locked --python 3.13
+      - name: Start disposable MinIO server
+        run: >-
+          docker run -d --name storage-minio -p 127.0.0.1:9000:9000
+          -e MINIO_ROOT_USER="$S3_TEST_ACCESS_KEY"
+          -e MINIO_ROOT_PASSWORD="$S3_TEST_SECRET_KEY"
+          pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:003925ecebdcd659494621de84984f20aac2ca0ce88684ba23bb1e38b8e0db3c server /data
+      - name: Wait for service
+        run: curl --fail --retry 30 --retry-all-errors --retry-delay 2 "$S3_TEST_ENDPOINT/minio/health/ready"
+      - name: Provision disposable bucket
+        run: |
+          uv run --no-sync python - <<'PY'
+          import asyncio
+          import os
+          from async_storage_kit import S3Storage
+
+          async def main():
+              storage = S3Storage(
+                  os.environ["S3_TEST_BUCKET"],
+                  endpoint_url=os.environ["S3_TEST_ENDPOINT"],
+                  access_key=os.environ["S3_TEST_ACCESS_KEY"],
+                  secret_key=os.environ["S3_TEST_SECRET_KEY"],
+                  region_name="us-east-1",
+                  addressing_style="path",
+              )
+              await storage.create_bucket()
+
+          asyncio.run(main())
+          PY
+      - name: Run live S3 contract
+        run: uv run --no-sync pytest -q -m live_s3
+      - name: MinIO logs
+        if: failure()
+        run: docker logs storage-minio
+      - name: Remove disposable MinIO server
+        if: always()
+        run: docker rm -f storage-minio

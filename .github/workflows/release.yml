@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to validate and publish (for example v1.0.0)
+        required: true
+        type: string
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-release:
+    name: Resolve reviewed release commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.13"
+      - name: Resolve tag and check default-branch ancestry and versions
+        id: resolve
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python .github/scripts/resolve_release.py
+
+  test-release:
+    name: Full compatibility and quality validation
+    needs: resolve-release
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.resolve-release.outputs.sha }}
+
+  verify-and-build:
+    name: Validate tag and build distributions
+    needs: resolve-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      artifact-id: ${{ steps.artifact.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-release.outputs.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.6"
+          enable-cache: true
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.13"
+      - name: Verify tag matches the package version
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import tomllib
+          version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+          if os.environ["RELEASE_TAG"] != f"v{version}":
+              raise SystemExit("Release tag does not match project.version")
+          PY
+      - name: Report publishing configuration
+        env:
+          PYPI_PUBLISH_ENABLED: ${{ vars.PYPI_PUBLISH_ENABLED }}
+        run: |
+          if [ "$PYPI_PUBLISH_ENABLED" = "true" ]; then
+            echo "PyPI publishing is enabled and requires successful build and compatibility jobs." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::notice::PyPI publishing is disabled. Set the repository variable PYPI_PUBLISH_ENABLED to true to enable the publish job."
+            echo "PyPI publishing is disabled: set PYPI_PUBLISH_ENABLED=true in repository variables." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Install validation tools
+        run: uv sync --locked --python 3.13
+      - name: Build and validate the candidate
+        run: |
+          uv build --no-sources
+          uv run --no-sync python -m twine check --strict dist/*
+          uv run --no-sync python .github/scripts/validate_distribution.py dist --test-sdist --test-extras
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: artifact
+        with:
+          name: release-distributions
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    if: (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') && vars.PYPI_PUBLISH_ENABLED == 'true'
+    needs: [verify-and-build, test-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Configure required reviewers, prevent self-review and disable admin bypass
+    # on this environment before enabling publication. YAML cannot set those rules.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/async-storage-kit
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.verify-and-build.outputs.artifact-id }}
+          path: dist
+          merge-multiple: true
+          digest-mismatch: error
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.6"
+          enable-cache: false
+      - name: Publish validated artifacts using PyPI Trusted Publishing
+        run: uv publish --trusted-publishing always --publish-url https://upload.pypi.org/legacy/ --check-url https://pypi.org/simple/ dist/*
