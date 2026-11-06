@@ -1,0 +1,73 @@
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-toml
+      - id: check-yaml
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+        # Generated dependency hashes; uv verifies the lock separately.
+        exclude: ^uv\.lock$
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-docstring-first
+
+  - repo: local
+    hooks:
+      - id: pyproject-fmt
+        name: Format pyproject.toml
+        entry: uv run --locked pyproject-fmt
+        language: system
+        files: ^pyproject\.toml$
+      - id: tox-ini-fmt
+        name: Format tox.ini
+        entry: uv run --locked tox-ini-fmt
+        language: system
+        files: ^tox\.ini$
+      - id: uv-lock
+        name: Verify uv.lock (offline)
+        entry: uv lock --check --offline
+        language: system
+        files: ^(pyproject\.toml|uv\.lock)$
+        pass_filenames: false
+      - id: ruff
+        name: Ruff lint (project-pinned version)
+        entry: uv run --locked ruff check --fix
+        language: system
+        types: [python]
+        files: ^(src/|tests/|examples/|\.github/scripts/)
+      - id: ruff-format
+        name: Ruff formatting
+        entry: uv run --locked ruff format
+        language: system
+        types: [python]
+        files: ^(src/|tests/|examples/|\.github/scripts/)
+      - id: mypy
+        name: Check core type annotations
+        entry: uv run --locked mypy src/
+        language: system
+        files: ^(src/.*\.pyi?$|pyproject\.toml$)
+        pass_filenames: false
+      - id: bandit
+        name: Bandit security scan
+        entry: uv run --locked bandit -c pyproject.toml -r src/async_storage_kit
+        language: system
+        files: ^(src/.*\.py$|pyproject\.toml$)
+        pass_filenames: false
+      - id: pytest
+        name: Pytest (offline storage contract and coverage)
+        entry: uv run --locked pytest -q --cov=async_storage_kit -m "not live_s3"
+        language: system
+        stages: [pre-commit, manual]
+        pass_filenames: false
+        always_run: true
+      - id: commitizen
+        name: Check conventional commit message
+        entry: uv run --locked cz check --commit-msg-file
+        language: system
+        stages: [commit-msg]
+        always_run: true
