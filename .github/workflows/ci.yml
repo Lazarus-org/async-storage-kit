@@ -66,6 +66,9 @@ jobs:
     needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -94,6 +97,15 @@ jobs:
           name: combined-coverage
           path: coverage.xml
           if-no-files-found: error
+      - name: Upload combined main-branch coverage to Codecov
+        if: github.ref == 'refs/heads/main' && inputs.ref == ''
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          use_oidc: true
+          files: ./coverage.xml
+          disable_search: true
+          fail_ci_if_error: true
+          name: combined-platform-coverage
 
   quality:
     name: Lint, types, hooks, and metadata

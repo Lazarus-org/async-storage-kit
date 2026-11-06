@@ -81,6 +81,12 @@ runs require 85%, since Windows cannot execute POSIX directory-descriptor APIs.
 No platform-specific code is excluded from measurement. Tox requires the selected
 interpreters to be installed. CI also runs the live S3-compatible service contract.
 
+The combined report from direct CI runs on `main` is uploaded to Codecov using
+GitHub OIDC authentication; no `CODECOV_TOKEN` secret is required. Maintainers
+must enable `Lazarus-org/async-storage-kit` in Codecov. The README badge updates
+after Codecov processes a successful upload. Release validation and pull requests
+still run the local coverage gate without uploading to the `main` report.
+
 To combine coverage data collected on different platforms, copy their uniquely
 named `.coverage.*` files into one checkout and run:
 
