@@ -259,7 +259,7 @@ def _test_sdist(
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         proof = (
             "from pathlib import Path; import async_storage_kit; "
-            f"assert Path(async_storage_kit.__file__).resolve().is_relative_to(Path({str(source / 'src')!r}))"
+            f"assert Path(async_storage_kit.__file__).resolve().is_relative_to(Path({str(source / 'src')!r}).resolve())"
         )
         subprocess.run(
             [sys.executable, "-c", proof], cwd=source, env=env, check=True, timeout=30
@@ -345,7 +345,7 @@ def main() -> None:
         from async_storage_kit.integrations.fastapi import storage_dependency
 
         assert sys.implementation.name == 'cpython'
-        assert Path(async_storage_kit.__file__).resolve().is_relative_to(Path(sys.prefix))
+        assert Path(async_storage_kit.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
         for name in ('aioboto3', 'botocore', 'aiofiles', 'fastapi', 'pydantic', 'django'):
             assert importlib.util.find_spec(name) is None, name
 

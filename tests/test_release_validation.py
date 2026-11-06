@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -14,6 +16,52 @@ def load_script(name):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.mark.parametrize("symlinked", [False, True])
+def test_extracted_source_import_proof_resolves_temporary_root(
+    tmp_path, monkeypatch, symlinked
+):
+    script = load_script("validate_distribution")
+    root = tmp_path / "real"
+    root.mkdir()
+    if symlinked:
+        alias = tmp_path / "alias"
+        try:
+            alias.symlink_to(root, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("Symlink privileges unavailable")
+        root = alias
+    monkeypatch.setattr(
+        script.tempfile, "TemporaryDirectory", lambda **kwargs: nullcontext(str(root))
+    )
+    run = subprocess.run
+    calls = []
+    wheel_contents = {"async_storage_kit/__init__.py": b"__version__ = '1.0.0'\n"}
+
+    def run_validation(command, **kwargs):
+        calls.append(command)
+        if command[1] == "-c":
+            # Execute the real import proof against the extracted package.
+            return run(command, **kwargs)
+        if command[1] == "build":
+            output = Path(command[command.index("--out-dir") + 1])
+            output.mkdir()
+            (output / "rebuilt.whl").write_bytes(b"wheel fixture")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(script.subprocess, "run", run_validation)
+    monkeypatch.setattr(script, "_wheel_contents", lambda path: wheel_contents)
+    script._test_sdist(
+        {
+            "src/async_storage_kit/__init__.py": wheel_contents[
+                "async_storage_kit/__init__.py"
+            ]
+        },
+        wheel_contents,
+        "uv",
+    )
+    assert [command[1] for command in calls] == ["-c", "-m", "build"]
 
 
 @pytest.mark.parametrize(
