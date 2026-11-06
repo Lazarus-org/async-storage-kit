@@ -181,7 +181,14 @@ async def test_symlink_to_inside_root_is_also_rejected(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_dangling_symlink_cannot_be_overwritten(tmp_path: Path) -> None:
+@pytest.mark.parametrize("portable_driver", [False, True])
+async def test_dangling_symlink_cannot_be_overwritten(
+    tmp_path: Path, monkeypatch, portable_driver: bool
+) -> None:
+    if portable_driver:
+        from async_storage_kit.backends import filesystem
+
+        monkeypatch.setattr(filesystem, "is_supported", lambda: False)
     storage = FileSystemStorage(tmp_path / "media")
     link = Path(storage.location) / "dangling.txt"
     try:
@@ -191,8 +198,18 @@ async def test_dangling_symlink_cannot_be_overwritten(tmp_path: Path) -> None:
     with pytest.raises(SuspiciousFileOperation):
         await storage.save("dangling.txt", b"not allowed", on_conflict="overwrite")
     assert link.is_symlink()
-    with pytest.raises(FileAlreadyExists):
+    # POSIX no-clobber publication encounters the existing directory entry;
+    # the portable driver rejects links during its earlier path validation.
+    expected_error = (
+        FileAlreadyExists
+        if storage.symlink_race_protection
+        else SuspiciousFileOperation
+    )
+    with pytest.raises(expected_error):
         await storage.save("dangling.txt", b"no", on_conflict="error")
+    assert link.is_symlink()
+    assert not (tmp_path / "does-not-exist").exists()
+    assert list(Path(storage.location).iterdir()) == [link]
 
 
 @pytest.mark.asyncio
