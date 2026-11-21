@@ -1,11 +1,63 @@
 from __future__ import annotations
 
-from pathlib import Path
+import os
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pytest
 
 from async_storage_kit import FileSystemStorage, MemoryStorage, SuspiciousFileOperation
-from async_storage_kit.utils import safe_join
+from async_storage_kit.utils import _comparison_path, safe_join
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        (PurePosixPath("/storage/file"), PurePosixPath("/storage/file")),
+        (PureWindowsPath(r"C:\storage\file"), PureWindowsPath(r"C:\storage\file")),
+        (PureWindowsPath(r"\\?\C:\storage\file"), PureWindowsPath(r"C:\storage\file")),
+        (
+            PureWindowsPath(r"\\?\UNC\server\share\file"),
+            PureWindowsPath(r"\\server\share\file"),
+        ),
+        (
+            PureWindowsPath(r"\\?\unc\server\share\file"),
+            PureWindowsPath(r"\\server\share\file"),
+        ),
+        (
+            PureWindowsPath(r"\\?\Volume{abc}\file"),
+            PureWindowsPath(r"\\?\Volume{abc}\file"),
+        ),
+    ],
+)
+def test_containment_comparison_normalizes_only_drive_and_unc_aliases(path, expected):
+    assert _comparison_path(path) == expected
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows path resolution only")
+@pytest.mark.parametrize(
+    ("root", "candidate"),
+    [
+        (r"C:\storage", r"\\?\C:\storage\file.bin"),
+        (r"\\?\C:\storage", r"C:\storage\file.bin"),
+        (r"\\?\C:\storage", r"\\?\C:\storage\file.bin"),
+        (r"\\server\share\storage", r"\\?\UNC\server\share\storage\file.bin"),
+        (r"\\?\UNC\server\share\storage", r"\\server\share\storage\file.bin"),
+    ],
+)
+@pytest.mark.parametrize("escape", [False, True])
+def test_safe_join_handles_mixed_windows_namespaces(
+    monkeypatch, root, candidate, escape
+):
+    if escape:
+        candidate = candidate.replace("storage", "storage-private")
+    resolved = iter([Path(root), Path(candidate)])
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "resolve", lambda self: next(resolved))
+        if escape:
+            with pytest.raises(SuspiciousFileOperation, match="escapes"):
+                safe_join(root, "file.bin")
+        else:
+            assert safe_join(root, "file.bin") == str(Path(candidate))
 
 
 @pytest.mark.parametrize(

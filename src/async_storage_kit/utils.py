@@ -6,7 +6,7 @@ import os
 import re
 import secrets
 import unicodedata
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
 
 from .exceptions import SuspiciousFileOperation
 
@@ -104,6 +104,17 @@ def alternative_name(name: str, *, max_length: int | None = None) -> str:
     return f"{prefix}{stem}{suffix}{ext}"
 
 
+def _comparison_path(path: PurePath) -> PurePath:
+    """Compare resolved Windows drive/UNC paths with or without device prefixes."""
+    if isinstance(path, PureWindowsPath):
+        value = str(path)
+        if value.upper().startswith("\\\\?\\UNC\\"):
+            return PureWindowsPath("\\\\" + value[8:])
+        if value.startswith("\\\\?\\") and _DRIVE.match(value[4:]):
+            return PureWindowsPath(value[4:])
+    return path
+
+
 def safe_join(base: str | os.PathLike[str], *paths: str) -> str:
     """Resolve a path and enforce directory containment (including existing links).
 
@@ -118,7 +129,10 @@ def safe_join(base: str | os.PathLike[str], *paths: str) -> str:
             candidate = candidate.joinpath(*name.split("/"))
     candidate = candidate.resolve()
     try:
-        candidate.relative_to(root)
+        # Concurrent creation can make Windows resolve one path with a \\?\
+        # prefix and the other without it. Compare equivalent namespaces while
+        # preserving the resolved path used for actual filesystem operations.
+        _comparison_path(candidate).relative_to(_comparison_path(root))
     except ValueError as exc:
         raise SuspiciousFileOperation("File path escapes the storage root.") from exc
     return str(candidate)

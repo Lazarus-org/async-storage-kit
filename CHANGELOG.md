@@ -3,6 +3,13 @@
 Notable changes to async-storage-kit are recorded here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- Avoid false filesystem containment errors on Windows when concurrent path
+  resolution mixes regular and extended-length drive or UNC path forms.
+
 ## 1.0.0 — Initial release
 
 - Framework-independent async file storage for Python 3.11 and newer, with no
