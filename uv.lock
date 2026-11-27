@@ -2646,14 +2646,14 @@ wheels = [
 
 [[package]]
 name = "tox-ini-fmt"
-version = "1.10.2"
+version = "1.10.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "packaging" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fa/7d/92f82eff7937edfe3426402c3e61fbc6c4744926f009050c9b4cb60dda0a/tox_ini_fmt-1.10.2.tar.gz", hash = "sha256:5200404a511a653dfc276fb7ab75a44706d466cf32429e9ee69348d35f3092c6", size = 22540, upload-time = "2026-11-04T05:11:08.844Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d9/60/6efa293b8ee88ff7e097e9f04becb14e53a16076bae0e77d9069945a3c9a/tox_ini_fmt-1.10.3.tar.gz", hash = "sha256:cf0bab5daf7e9fda67feead12830e243a028b8f386cf6b7215b36aa5794c107f", size = 23418, upload-time = "2026-11-18T01:34:36.73Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/67/41d357eaa980687819423e95f0766a982a978989d23f4cbac0c166042393/tox_ini_fmt-1.10.2-py3-none-any.whl", hash = "sha256:50651c5a559297b2c356854284a990a973ee12dfa6b1789745a29bf72fafff49", size = 15359, upload-time = "2026-11-04T05:11:07.37Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/dc/40aef822a39125ce9dd8e30b6a84d65807d3ecf5d6655c97e9ffc79452d4/tox_ini_fmt-1.10.3-py3-none-any.whl", hash = "sha256:5e757fc20de67d82e05cf32fdbd7fc01594716631eb827111f724ca5862695d4", size = 67532, upload-time = "2026-11-18T01:34:35.468Z" },
 ]
 
 [[package]]
